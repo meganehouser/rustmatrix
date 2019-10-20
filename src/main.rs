@@ -1,37 +1,19 @@
 use cursive::Cursive;
-use cursive::views::{Canvas, Dialog, SizedView, TextView, ViewBox};
+use cursive::theme::Theme;
+use cursive::theme::Color;
+use crate::view::GreenCodeView;
 
-pub enum NodeType {
-    Eraser,
-    Writer,
-}
-
-pub struct Node {
-    node_type: NodeType,
-    x: u32,
-    y: u32,
-    last_char: Option<char>,
-    white: bool,
-    expired: bool,
-}
-
-pub struct Column {
-    x: u32,
-    row_count: u32,
-    start_delay: u32,
-}
-
-pub struct GreenCodeView {
-    content: Vec<Column>,
-}
-
-
+mod view;
 
 
 fn main() {
     let mut siv: Cursive = Cursive::default();
-    siv.add_fullscreen_layer(Dialog::around(TextView::new("Hello world"))
-        .title("cursive")
-        .button("quit", |s| s.clear()));
+    let size = siv.screen_size();
+    let mut theme = Theme::default();
+    theme.palette.set_color("view", Color::TerminalDefault );
+    siv.set_theme(theme);
+
+    siv.add_fullscreen_layer(GreenCodeView::new(1, size));
+    siv.set_autorefresh(true);
     siv.run();
 }

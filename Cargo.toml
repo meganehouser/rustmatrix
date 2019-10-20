@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 cursive = "0.13"
+rand = "0.7.2"
