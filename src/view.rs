@@ -1,9 +1,9 @@
-use cursive::theme::Style;
-use cursive::view::View;
 use cursive::event::{Event, EventResult};
-use cursive::Printer;
+use cursive::theme::Style;
 use cursive::theme::{Color, ColorStyle, Effect};
 use cursive::vec::Vec2;
+use cursive::view::View;
+use cursive::Printer;
 use rand::prelude::*;
 use std::collections::VecDeque;
 
@@ -21,11 +21,15 @@ struct Cell {
 
 impl Cell {
     fn new(char: char, bold: bool, white: bool) -> Cell {
-        Cell {char, bold, white}
+        Cell { char, bold, white }
     }
 
     fn blank() -> Cell {
-        Cell {char: BLANK, bold: false, white: false}
+        Cell {
+            char: BLANK,
+            bold: false,
+            white: false,
+        }
     }
 }
 
@@ -46,7 +50,7 @@ impl From<&Cell> for Style {
 
 enum NodeType {
     Eraser,
-    Writer{ white: bool },
+    Writer { white: bool },
 }
 
 struct InnerNode {
@@ -56,28 +60,26 @@ struct InnerNode {
 
 impl InnerNode {
     fn new(node_type: NodeType, rand: ThreadRng) -> InnerNode {
-        InnerNode {node_type, rand}
+        InnerNode { node_type, rand }
     }
 
     fn create_cell(&mut self) -> Cell {
         match self.node_type {
-            NodeType::Writer{white: w} => {
+            NodeType::Writer { white: w } => {
                 let bold = self.rand.gen();
                 let char = self.choice_char();
                 Cell::new(char, bold, w.to_owned())
-            },
-            NodeType::Eraser => {
-                Cell::blank()
-            },
+            }
+            NodeType::Eraser => Cell::blank(),
         }
     }
 
     fn choice_char(&mut self) -> char {
         match self.node_type {
-            NodeType::Writer {white: _} => {
+            NodeType::Writer { white: _ } => {
                 let chars: Vec<char> = String::from(CHARS).chars().collect();
                 chars.choose(&mut self.rand).unwrap().to_owned()
-            },
+            }
             NodeType::Eraser => BLANK,
         }
     }
@@ -93,7 +95,7 @@ impl Node {
         let y = 0;
         let rand = thread_rng();
         let inner_node = InnerNode::new(node_type, rand);
-        Node {y, inner_node}
+        Node { y, inner_node }
     }
 
     fn update(&mut self) {
@@ -184,9 +186,9 @@ pub struct GreenCodeView {
 impl GreenCodeView {
     pub fn new(speed: u32, size: Vec2) -> GreenCodeView {
         let column_count = size.x / 2;
-        let columns = (0..column_count).map(|_x| {
-            Column::new(size.y, thread_rng())
-        }).collect();
+        let columns = (0..column_count)
+            .map(|_x| Column::new(size.y, thread_rng()))
+            .collect();
 
         GreenCodeView {
             columns,
@@ -216,12 +218,10 @@ impl View for GreenCodeView {
         for (x, column) in self.columns.iter().enumerate() {
             for (y, cell) in column.data.iter().enumerate() {
                 let style = Style::from(cell);
-                printer.with_style(
-                    style,
-                    |p| {
-                        let s = cell.char.to_owned().to_string();
-                        p.print((x * 2, y), &s);
-                    });
+                printer.with_style(style, |p| {
+                    let s = cell.char.to_owned().to_string();
+                    p.print((x * 2, y), &s);
+                });
             }
         }
     }
