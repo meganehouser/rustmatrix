@@ -1,163 +1,120 @@
-use cursive::event::{Event, EventResult};
-use cursive::theme::Style;
-use cursive::theme::{Color, ColorStyle, Effect};
-use cursive::vec::Vec2;
-use cursive::view::View;
-use cursive::Printer;
 use rand::prelude::*;
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io::{stdout, Stdout, Write};
+use std::mem;
+use termion;
+use termion::raw::{IntoRawMode, RawTerminal};
 
 const CHARS: &str = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNMｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ1234567890-=*_+|:<>";
-const BLANK: char = ' ';
-const COLOR_WHITE: u8 = 15;
-const COLOR_GREEN: u8 = 2;
 
-#[derive(Clone)]
-struct Cell {
-    char: char,
-    bold: bool,
-    white: bool,
+enum ColorType {
+    White,
+    Normal,
 }
 
-impl Cell {
-    fn new(char: char, bold: bool, white: bool) -> Cell {
-        Cell { char, bold, white }
-    }
-
-    fn blank() -> Cell {
-        Cell {
-            char: BLANK,
-            bold: false,
-            white: false,
-        }
-    }
-}
-
-impl From<&Cell> for Style {
-    fn from(cell: &Cell) -> Self {
-        let mut style = Self::default();
-        if cell.bold {
-            style.effects.insert(Effect::Bold);
-        };
-        if cell.white {
-            style.color = Some(ColorStyle::from(Color::from_256colors(COLOR_WHITE)));
-        } else {
-            style.color = Some(ColorStyle::from(Color::from_256colors(COLOR_GREEN)));
-        };
-        style
-    }
+enum Character {
+    Char {
+        char: char,
+        bold: bool,
+        color_type: ColorType,
+    },
+    Blank,
 }
 
 enum NodeType {
     Eraser,
-    Writer { white: bool },
+    Writer { white: bool, rng: ThreadRng },
 }
 
-struct InnerNode {
-    node_type: NodeType,
-    rand: ThreadRng,
-}
-
-impl InnerNode {
-    fn new(node_type: NodeType, rand: ThreadRng) -> InnerNode {
-        InnerNode { node_type, rand }
-    }
-
-    fn create_cell(&mut self) -> Cell {
-        match self.node_type {
-            NodeType::Writer { white: w } => {
-                let bold = self.rand.gen();
-                let char = self.choice_char();
-                Cell::new(char, bold, w.to_owned())
-            }
-            NodeType::Eraser => Cell::blank(),
-        }
-    }
-
-    fn choice_char(&mut self) -> char {
-        match self.node_type {
-            NodeType::Writer { white: _ } => {
+impl NodeType {
+    fn choice_char(&mut self) -> Character {
+        match self {
+            NodeType::Writer { white, ref mut rng } => {
                 let chars: Vec<char> = String::from(CHARS).chars().collect();
-                chars.choose(&mut self.rand).unwrap().to_owned()
+                let char = chars.choose(rng).unwrap().to_owned();
+                let bold = rng.gen();
+                let color_type = if *white {
+                    ColorType::White
+                } else {
+                    ColorType::Normal
+                };
+                Character::Char {
+                    char,
+                    bold,
+                    color_type,
+                }
             }
-            NodeType::Eraser => BLANK,
+            NodeType::Eraser => Character::Blank,
         }
     }
 }
 
 struct Node {
-    y: usize,
-    inner_node: InnerNode,
+    node_type: NodeType,
+    y: u16,
+    previous_char: Character,
+    char: Character,
 }
 
 impl Node {
-    fn new(node_type: NodeType) -> Node {
-        let y = 0;
-        let rand = thread_rng();
-        let inner_node = InnerNode::new(node_type, rand);
-        Node { y, inner_node }
+    fn new(mut node_type: NodeType) -> Node {
+        let y = 1;
+        let char = node_type.choice_char();
+        Node {
+            node_type,
+            y,
+            previous_char: Character::Blank,
+            char,
+        }
     }
 
     fn update(&mut self) {
-        self.y = self.y + 1;
-    }
-}
-
-impl From<&mut Node> for Cell {
-    fn from(node: &mut Node) -> Self {
-        node.inner_node.create_cell()
+        self.y += 1;
+        let next_char = self.node_type.choice_char();
+        self.previous_char = mem::replace(&mut self.char, next_char);
     }
 }
 
 struct Column {
-    row_count: usize,
-    wait_time: usize,
-    rand: ThreadRng,
+    row_count: u16,
+    wait_time: u16,
+    rng: ThreadRng,
     nodes: VecDeque<Node>,
-    data: Vec<Cell>,
     is_drawing: bool,
 }
 
 impl Column {
-    pub fn new(row_count: usize, rand: ThreadRng) -> Column {
-        let nodes = VecDeque::new();
-        let mut rand_mut = rand;
-        let wait_time = rand_mut.gen_range(0, row_count); //rand_mut.gen();
-
+    fn new(row_count: u16) -> Column {
+        let mut rng = thread_rng();
+        let wait_time = rng.gen_range(0, row_count);
         Column {
             row_count,
             wait_time,
-            rand,
-            nodes,
-            data: vec![Cell::blank(); row_count],
+            rng,
+            nodes: VecDeque::new(),
             is_drawing: false,
         }
     }
 
     fn spawn_node(&mut self) -> Node {
         let max_range = self.row_count - 3;
-        let start_delay = self.rand.gen_range(1, max_range);
+        let start_delay = self.rng.gen_range(1, max_range);
         self.wait_time = start_delay;
 
         self.is_drawing = !self.is_drawing;
         if self.is_drawing {
-            let white: bool = self.rand.gen();
-            Node::new(NodeType::Writer { white })
+            let white: bool = self.rng.gen();
+            Node::new(NodeType::Writer {
+                white,
+                rng: thread_rng(),
+            })
         } else {
             Node::new(NodeType::Eraser)
         }
     }
 
     fn update(&mut self) {
-        for node in self.nodes.iter_mut() {
-            let index = node.y;
-            let cell = Cell::from(node);
-            if cell.white && index > 0 {
-                self.data[index - 1].white = false;
-            }
-            self.data[index] = cell;
-        }
-
         for node in self.nodes.iter_mut() {
             node.update();
         }
@@ -170,70 +127,132 @@ impl Column {
         }
 
         if let Some(node) = self.nodes.front() {
-            if node.y > self.row_count - 1 {
+            if node.y > self.row_count {
                 self.nodes.pop_front();
             }
         }
     }
 }
 
-pub struct GreenCodeView {
+pub struct MatrixApp {
     columns: Vec<Column>,
-    ticks: u32,
-    speed: u32,
+    stdout: RefCell<RawTerminal<Stdout>>,
 }
 
-impl GreenCodeView {
-    pub fn new(speed: u32, size: Vec2) -> GreenCodeView {
-        let column_count = size.x / 2;
-        let columns = (0..column_count)
-            .map(|_x| Column::new(size.y, thread_rng()))
-            .collect();
+impl MatrixApp {
+    pub fn new() -> MatrixApp {
+        let (size_x, size_y) = termion::terminal_size().unwrap();
+        let mut stdout = stdout().into_raw_mode().unwrap();
+        write!(stdout, "{}{}", termion::clear::All, termion::cursor::Hide).unwrap();
+        let column_count = size_x / 2;
 
-        GreenCodeView {
+        let columns = (0..column_count).map(|_| Column::new(size_y)).collect();
+
+        MatrixApp {
             columns,
-            ticks: 0,
-            speed,
+            stdout: RefCell::new(stdout),
         }
     }
 
-    fn increment_ticks(&mut self) {
-        if self.ticks == self.speed {
-            self.ticks = 0;
-            self.elapsed()
-        } else {
-            self.ticks = self.ticks + 1;
-        }
-    }
-
-    fn elapsed(&mut self) {
+    fn update(&mut self) {
         for column in self.columns.iter_mut() {
             column.update();
         }
     }
-}
 
-impl View for GreenCodeView {
-    fn draw(&self, printer: &Printer<'_, '_>) {
+    fn draw(&self) {
         for (x, column) in self.columns.iter().enumerate() {
-            for (y, cell) in column.data.iter().enumerate() {
-                let style = Style::from(cell);
-                printer.with_style(style, |p| {
-                    let s = cell.char.to_owned().to_string();
-                    p.print((x * 2, y), &s);
-                });
+            for node in column.nodes.iter() {
+                write!(
+                    self.stdout.borrow_mut(),
+                    "{}",
+                    termion::cursor::Goto((x * 2) as u16, node.y)
+                )
+                .unwrap();
+
+                match &node.char {
+                    Character::Char {
+                        char,
+                        bold,
+                        color_type,
+                    } => {
+                        match color_type {
+                            ColorType::White => {
+                                self.set_white_char_style();
+                            }
+                            ColorType::Normal => {
+                                self.set_normal_char_style(*bold);
+                            }
+                        };
+                        write!(
+                            self.stdout.borrow_mut(),
+                            "{}{}",
+                            char,
+                            termion::style::Reset
+                        )
+                        .unwrap();
+                    }
+                    Character::Blank => {
+                        write!(self.stdout.borrow_mut(), " ").unwrap();
+                    }
+                }
+
+                if node.y == 1 {
+                    continue;
+                }
+
+                if let Character::Char {
+                    char,
+                    bold,
+                    color_type: ColorType::White,
+                } = &node.char
+                {
+                    self.set_normal_char_style(*bold);
+                    write!(
+                        self.stdout.borrow_mut(),
+                        "{}{}{}",
+                        termion::cursor::Goto((x * 2) as u16, (node.y - 1) as u16),
+                        char,
+                        termion::style::Reset
+                    )
+                    .unwrap();
+                }
             }
         }
-    }
-    fn required_size(&mut self, constraint: Vec2) -> Vec2 {
-        constraint
+        self.stdout.borrow_mut().flush().unwrap();
     }
 
-    fn on_event(&mut self, event: Event) -> EventResult {
-        if event == Event::Refresh {
-            self.increment_ticks();
+    fn set_normal_char_style(&self, bold: bool) {
+        if bold {
+            write!(self.stdout.borrow_mut(), "{}", termion::style::Bold,).unwrap();
         }
 
-        EventResult::Consumed(None)
+        write!(
+            self.stdout.borrow_mut(),
+            "{}",
+            termion::color::Fg(termion::color::Green)
+        )
+        .unwrap();
+    }
+
+    fn set_white_char_style(&self) {
+        write!(
+            self.stdout.borrow_mut(),
+            "{}{}",
+            termion::style::Bold,
+            termion::color::Fg(termion::color::White)
+        )
+        .unwrap();
+    }
+
+    pub fn on_tick(&mut self) {
+        self.update();
+        self.draw();
+    }
+}
+
+impl Drop for MatrixApp {
+    fn drop(&mut self) {
+        write!(self.stdout.borrow_mut(), "{}", termion::cursor::Show).unwrap();
     }
 }
